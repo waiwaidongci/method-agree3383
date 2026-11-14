@@ -55,16 +55,24 @@ JWT有效期8小时，密码带盐PBKDF2-SHA256。审计记录写入、批准、
 
 **复算。** 指纹为稳定排序试片编号、两侧全部输入值、仪器代码/量纲/量程、数据集标识、λ、允许误差、范围、bootstrap次数、seed与算法版本的规范JSON SHA256。图展示全部选中点，坐标范围由真实读数、拟合线、界限、CI与业务允许误差共同确定，不用固定步长抽样。
 
+**版本重算。** 实验室重测误差方差比后，在“建立研究”页底部勾选受影响研究、写新 λ，发起一个重算批次。每次计算都写入新的 `RunVersion`（含数据集、范围、允许误差、λ、bootstrap 与完整结果），原启用版本保持不变；试算页面与资格记录可显式引用任一版本，各自读取该版完整参数与样本指纹。
+
+- **整批启用。** 批次内每份研究算完且全部成功时为 `ready`，只有此时可整批统一启用；任一失败则整批 `failed`，所有研究继续使用原启用版本，绝不逐项生效。
+- **续算。** 批次项状态（queued/running/ready/failed/revoked）与批次状态落在 MySQL，worker 重启后 `resume_batches` 把 running 项退回 queued 继续；已就绪项不重算。
+- **幂等。** 同一组研究、同一 λ 的重复请求返回原批次（`reused=true`），不重建研究、不重复计算。
+- **冲突与接替。** 研究中已有未结束批次占用时，新请求返回 409；撤销该批后，新的批次可接替。研究上的 `recalc_generation` 在每次接替/撤销时递增，候选结果写回前会在行锁下复核代次与批次状态，晚到的旧计算结果只能标记作废，不能覆盖接替批的结果。
+- **资格固定版本。** `Qualification.version_id` 在创建时固定：新资格默认引用当前启用版本，也可显式选归档版本；既有资格按创建时那一版继续批准与导出，重算启用不改变已批准档案的内容。
+
 ## 六页与五实体
 
 - 比对总览：三种样本条件、最新差值图和研究摘要。
 - 仪器与样本：Instrument登记、PairDataset导入、PairedReading搜索分页。
-- 建立研究：ComparisonRun的λ、范围、允许误差和bootstrap配置、队列列表。
-- 结果解释：双图、参数/界限CI、范围限制、逆校准试算。
+- 建立研究：ComparisonRun的λ、范围、允许误差和bootstrap配置、队列列表；底部为成批重算面板（选研究、新λ、批次进度、撤销与整批启用）。
+- 结果解释：版本选择、双图、参数/界限CI、范围限制、按版本逆校准试算、版本目录。
 - 资格档案：Qualification提案、负责人批准、获批CSV。
 - 操作留痕：最近100条写入与交付记录。
 
-五实体各有model/schema/service/controller/route/前端API/Pinia store/页面链路。共用业务组件DatasetSelect、MethodSummary、AgreementPlot、RunTable；共用PageTitle/StatusBadge/ErrorNotice/EmptyState。useTask与usePolling隔离恢复与轮询行为。
+五实体各有model/schema/service/controller/route/前端API/Pinia store/页面链路；重算批次使用RunVersion/RecalculationBatch/RecalculationItem三个附属表。共用业务组件DatasetSelect、MethodSummary、AgreementPlot、RunTable、RecalcPanel；共用PageTitle/StatusBadge/ErrorNotice/EmptyState。useTask与usePolling隔离恢复与轮询行为。
 
 ## 技术、环境与目录
 
@@ -73,12 +81,12 @@ JWT有效期8小时，密码带盐PBKDF2-SHA256。审计记录写入、批准、
 | 前端 | Vue3、TypeScript、Pinia、Vue Router、Vite6.4.6、Nginx1.27 |
 | Python API | Python3.11、FastAPI、SQLAlchemy、PyMySQL、PyJWT |
 | 算法 | NumPy；手写Deming闭式解和配对bootstrap；独立特征值分解oracle在测试产物 |
-| 任务 | 单Python worker，MySQL任务状态为事实源，Redis唤醒；重启恢复queued/running |
+| 任务 | 单Python worker，MySQL任务状态为事实源（含重算批次项），Redis唤醒；重启恢复queued/running 研究与批次 |
 | 数据服务 | MySQL8.0、Redis7 AOF |
 
-恰好frontend/backend/worker/db/redis五服务，均真实healthcheck。backend等db/redis；worker另外等backend初始化；frontend等backend。命名卷为数据库、Redis、后端/worker共享产物；当前结果在DB、CSV按记录实时生成，共享产物卷保留扩展通道。初始schema由metadata建立，`backend/migrations/001_initial.sql`记录v1自然键；未加入生产schema升级工具。
+恰好frontend/backend/worker/db/redis五服务，均真实healthcheck。backend等db/redis；worker另外等backend初始化；frontend等backend。启动时 `schema_upgrade.ensure_schema` 在 `create_all` 之外为旧演示库补 `run_versions` 等结构与新增列，并为已有研究补建 v1。命名卷为数据库、Redis、后端/worker共享产物；当前结果在DB、CSV按记录实时生成，共享产物卷保留扩展通道。初始schema由metadata建立，`backend/migrations/001_initial.sql`记录v1自然键；未加入生产schema升级工具。
 
-`backend/src/{routes,controllers,services,models,schemas,middlewares,utils,constants,config}`；`backend/scripts/seed_demo.py`；`frontend/src/{api,stores,types,components/common,hooks,pages,router,utils,constants}`。
+`backend/src/{routes,controllers,services,models,schemas,middlewares,utils,constants,config}`；`backend/scripts/seed_demo.py`；`backend/tests/`（pytest，SQLite + 假Redis，覆盖批次原子启用、续算、冲突/接替、晚到结果、资格固定版本）；`frontend/src/{api,stores,types,components/common,hooks,pages,router,utils,constants}`。
 
 | 环境变量 | 默认 |
 |---|---|

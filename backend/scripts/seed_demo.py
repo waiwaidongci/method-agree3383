@@ -3,10 +3,11 @@ from sqlalchemy import select,func
 from src.config.database import Base,engine,Session
 from src.models import User,Instrument,PairDataset,PairedReading,ComparisonRun,Qualification
 from src.utils.security import hash_password
-from src.services.run_service import execute_run
+from src.services.run_service import execute_run,ensure_versions
 
 def seed():
-    Base.metadata.create_all(engine);rng=random.Random(73)
+    from src.config.schema_upgrade import ensure_schema
+    ensure_schema();rng=random.Random(73)
     with Session() as db:
         for role,name in [('admin','程瓷 · 实验室负责人'),('analyst','江光 · 测量工程师'),('viewer','许澄 · 设备观察员')]:
             if not db.scalar(select(User).where(User.email==f'{role}@ciguang.demo')):db.add(User(email=f'{role}@ciguang.demo',name=name,role=role,password_hash=hash_password('Ciguang2026!')))
@@ -29,9 +30,11 @@ def seed():
             runname=name+' / λ=1'
             if not db.scalar(select(ComparisonRun).where(ComparisonRun.name==runname)):
                 run=ComparisonRun(name=runname,dataset_id=dataset.id,lambda_ratio=1,allowance=2,range_low=0,range_high=100,bootstrap_count=500,status='queued');db.add(run);db.commit();execute_run(db,run.id)
+                db.refresh(run)
+        ensure_versions(db)
         first=db.scalar(select(ComparisonRun).order_by(ComparisonRun.id))
         if first and first.status=='completed' and not db.scalar(select(Qualification).where(Qualification.title=='N02稳定光源资格 · 10–85%')):
-            db.add(Qualification(title='N02稳定光源资格 · 10–85%',run_id=first.id,mode='raw',scope_low=10,scope_high=85,note='稳定光源条件下使用；仅覆盖本次参考反射率范围，不延伸到便携仪或其他光源。',status='approved',approved_by='admin@ciguang.demo'))
+            db.add(Qualification(title='N02稳定光源资格 · 10–85%',run_id=first.id,version_id=first.active_version_id,mode='raw',scope_low=10,scope_high=85,note='稳定光源条件下使用；仅覆盖本次参考反射率范围，不延伸到便携仪或其他光源。',status='approved',approved_by='admin@ciguang.demo'))
         db.commit()
         print(json.dumps({m.__tablename__:db.scalar(select(func.count()).select_from(m)) for m in (User,Instrument,PairDataset,PairedReading,ComparisonRun,Qualification)},ensure_ascii=False))
 if __name__=='__main__':seed()

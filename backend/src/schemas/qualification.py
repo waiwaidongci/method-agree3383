@@ -3,6 +3,7 @@ from src.constants.enums import QualificationMode
 class QualificationInput(BaseModel):
     title:str=Field(min_length=2,max_length=160)
     run_id:int
+    version_id:int|None=None
     mode:QualificationMode
     scope_low:float=Field(ge=0,le=100,allow_inf_nan=False)
     scope_high:float=Field(ge=0,le=100,allow_inf_nan=False)

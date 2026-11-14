@@ -1,5 +1,6 @@
 import numpy as np
 from src.services.deming import deming_fit
+ALGORITHM_VERSION="deming-ba-v1"
 def agreement_analysis(x,y,lambda_ratio=1,bootstrap_count=500,seed=73):
     x=np.asarray(x,dtype=float);y=np.asarray(y,dtype=float)
     if len(x)!=len(y) or len(x)<20:raise ValueError("一致性与bootstrap分析至少需要20对独立样本")

@@ -13,3 +13,8 @@ class RunInput(BaseModel):
         return self
 class CalibrationInput(BaseModel):
     candidate_value:float=Field(ge=0,le=100,allow_inf_nan=False)
+    version_id:int|None=None
+class RecalculationInput(BaseModel):
+    run_ids:list[int]=Field(min_length=1,max_length=200)
+    lambda_ratio:float=Field(ge=.01,le=100,allow_inf_nan=False)
+    note:str=Field(default="",max_length=600)
